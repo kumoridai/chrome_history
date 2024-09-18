@@ -1,0 +1,4 @@
+# requirements.txt
+pandas==1.5.0
+PyYAML==6.0
+janome==0.4.2
