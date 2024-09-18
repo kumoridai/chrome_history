@@ -382,6 +382,23 @@ def generate_markdown_text(date_str, total_visits, top_domains, top_domains_visi
         md_text += f'- **総アクセス数**: {total_visits}回\n'
     
     if total_visits > 0:
+        # 注目したページ
+        if analysis_options.get('highlighted_pages', True) and top_pages_info is not None:
+            md_text += '\n## 注目したページ\n\n'
+            for idx, row in top_pages_info.iterrows():
+                title = row['title'] if row['title'] else '（タイトルなし）'
+                url = row['url']
+                md_text += f'- [{title}]({url})\n'
+
+        # キーワード上位10
+        if analysis_options.get('top_keywords', True) and keyword_counts is not None:
+            md_text += '\n## キーワード上位10\n\n'
+            # テーブルのヘッダーを追加
+            md_text += '| キーワード | 出現回数 |\n'
+            md_text += '|---|---|\n'
+            for word, count in keyword_counts:
+                md_text += f'| {word} | {count}回 |\n'
+
         # 最も訪問したドメイン
         if analysis_options.get('top_domains', True) and top_domains is not None:
             md_text += '\n## 最も訪問したドメイン（滞在時間順）\n\n'
@@ -394,28 +411,12 @@ def generate_markdown_text(date_str, total_visits, top_domains, top_domains_visi
                 minutes, seconds = divmod(time_spent, 60)
                 time_str = f'{int(minutes)}分{int(seconds)}秒'
                 md_text += f'| {domain} | {visits}回 | {time_str} |\n'
-    
-        # 注目したページ
-        if analysis_options.get('highlighted_pages', True) and top_pages_info is not None:
-            md_text += '\n## 注目したページ\n\n'
-            for idx, row in top_pages_info.iterrows():
-                title = row['title'] if row['title'] else '（タイトルなし）'
-                url = row['url']
-                md_text += f'- [{title}]({url})\n'
-    
+
         # 時間帯ごとのアクセス数
         if analysis_options.get('hourly_visits', True) and hourly_visits is not None:
             md_text += '\n## 時間帯ごとのアクセス数\n\n'
             md_text += generate_chartsview_data(hourly_visits)
-    
-        # キーワード上位10
-        if analysis_options.get('top_keywords', True) and keyword_counts is not None:
-            md_text += '\n## キーワード上位10\n\n'
-            # テーブルのヘッダーを追加
-            md_text += '| キーワード | 出現回数 |\n'
-            md_text += '|---|---|\n'
-            for word, count in keyword_counts:
-                md_text += f'| {word} | {count}回 |\n'
+
     else:
         md_text += '- **データがありません**\n'
     
@@ -454,30 +455,6 @@ def write_markdown_file(md_text, md_file_path, file_mode):
     except Exception as e:
         print(f'ファイルの書き込み中にエラーが発生しました: {e}')
 
-def main():
-    # 設定ファイルを読み込む
-    config = load_config()
-    
-    # 一時的な履歴ファイルをコピー
-    temp_history_path = copy_history_file()
-    
-    # タイムゾーンの取得
-    local_timezone = datetime.now().astimezone().tzinfo
-    
-    # 対象の日付を取得
-    target_date = get_target_date(config.get('date', 'today'), local_timezone)
-    
-    # 過去の開始タイムスタンプを計算
-    past_days = config.get('past_days', 7)  # デフォルトは7日間
-    past_date = target_date - timedelta(days=past_days)
-    
-    # epoch_start を定義（タイムゾーンを統一）
-    epoch_start = datetime(1601, 1, 1, tzinfo=local_timezone)
-    
-    # タイムスタンプを計算
-    date_format = config.get('date_format', '%Y_%m_%d')
-    date_str = target_date.strftime(date_format)
-    
 def main():
     # 設定ファイルを読み込む
     config = load_config()

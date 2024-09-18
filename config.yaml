@@ -14,11 +14,10 @@ date_format: '%Y_%m_%d'
 # 各分析機能を有効（true）または無効（false）に設定します
 analysis_options:
   total_visits: True          # 総アクセス数の計算
-  top_domains: True           # 最も訪問したドメインの表示
   highlighted_pages: True     # 注目したページの抽出
-  hourly_visits: True         # 時間帯ごとのアクセス数の集計
   top_keywords: True          # キーワードの抽出と上位表示
-
+  top_domains: True           # 最も訪問したドメインの表示
+  hourly_visits: True         # 時間帯ごとのアクセス数の集計
 
 # 除外するドメインのリスト
 # 注目したページの解析結果から除外したいドメインを指定します。
