@@ -1,0 +1,99 @@
+# config.yaml
+
+# 日時の指定
+# 'today'、'yesterday'、または 'YYYY-MM-DD' の形式で指定します。
+date: 'yesterday'
+
+# 日付のフォーマット
+# 出力ファイル名や Markdown 内で使用される日付の形式を指定します。
+# Python の strftime フォーマットコードを使用します。
+# 例: '%Y_%m_%d' → '2024_09_14'
+date_format: '%Y_%m_%d'
+
+# 分析オプション
+# 各分析機能を有効（true）または無効（false）に設定します
+analysis_options:
+  total_visits: True          # 総アクセス数の計算
+  top_domains: True           # 最も訪問したドメインの表示
+  highlighted_pages: True     # 注目したページの抽出
+  hourly_visits: True         # 時間帯ごとのアクセス数の集計
+  top_keywords: True          # キーワードの抽出と上位表示
+
+
+# 除外するドメインのリスト
+# 注目したページの解析結果から除外したいドメインを指定します。
+exclude_domains:
+  - facebook.com
+  - twitter.com
+  - x.com
+  - mobile.x.com
+  - t.co
+  - pbs.twimg.com
+  - www.pixiv.net
+  - www.google.com
+  - www.youtube.com
+  - feedly.com
+  - chatgpt.com
+  # 他に除外したいドメインを追加してください
+
+# 除外する URL のリスト
+# 注目したページの解析結果から除外したい特定の URL を指定します。
+exclude_urls:
+  - https://note.com/kumoridai/
+  - https://note.com/kumoridai
+  - https://drive.google.com/drive/u/0/home
+  - https://drive.google.com/drive/u/0/
+  - https://misskey.io/
+  - https://misskey.io/#pswp
+  - https://www.amazon.co.jp/gp/video/storefront
+  # 他に除外したい URL を追加してください
+
+# 除外する URL のパターン（正規表現）
+# 特定のパターンにマッチする URL を除外します。
+exclude_url_patterns:
+  - '^https?://(www\.)?google\.[^/]+/search\?.*'
+  # 他に除外したい URL パターンを追加してください
+
+# セッションの間隔（秒）
+# この時間（秒）以上前回の訪問から経過した場合、新しいセッションとみなします。
+# デフォルトは 1800 秒（30 分）です。
+session_timeout: 1800
+
+# 許容される最大滞在時間（秒）
+# 各ページの滞在時間の上限を設定します。
+# デフォルトは 1800 秒（30 分）です。
+max_duration: 1800
+
+# スコア計算の重み
+# 注目したページを選定する際のスコア計算で使用します。合計値を気にする必要はありません。
+score_weights:
+  duration_weight: 0.7       # 滞在時間の重み
+  visit_count_weight: 0.3    # 訪問回数の重み
+  keyword_weight: 1.0        # キーワードマッチの重み
+  domain_weight: 1.5         # 優先ドメインマッチの重み
+
+# 優先キーワードのリスト
+# タイトルに含まれるとスコアが加算されるキーワードを指定します。
+priority_keywords:
+  - 'Obsidian'
+  - 'python'
+  - 'ポケモン'
+  # 他に追加したいキーワードをリストに追加してください
+
+# 優先ドメインのリスト
+# 注目したページに優先的に表示したいドメインを指定します。
+# これらのドメインについてはドメイン重複を許可します。
+priority_domains:
+  - 'qiita.com'
+  - 'note.com'
+  - 'ja.wikipedia.org'
+  # 他に追加したい優先ドメインをリストに追加してください
+
+# 過去何日分のデータを取得するか（初訪問判定に使用）
+past_days: 7  # デフォルトは7日間
+
+# Markdown ファイルの出力先ディレクトリ
+# 解析結果の Markdown ファイルを保存するディレクトリを指定します。
+# デフォルトはカレントディレクトリ内の 'output' フォルダ
+output_dir: 'output' 
+# 'C:\\Users\\USERNAME\\Google ドライブ\\Obsidian\\journals'のように指定すれば、直接デイリーノートに追記可能
