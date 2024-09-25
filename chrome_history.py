@@ -42,15 +42,35 @@ def load_config(config_path='config.yaml'):
         print(f"設定ファイルの読み込み中にエラーが発生しました: {e}")
         sys.exit(1)
 
-def copy_history_file():
+def expand_paths(paths):
     """
-    Chromeの履歴ファイルを一時的な場所にコピーする。
+    パス内の環境変数やユーザーディレクトリを展開する。
     """
-    user_path = os.path.expanduser('~')
-    history_path = os.path.join(user_path, 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'History')
-    temp_history_path = 'History_copy'
-    shutil.copy2(history_path, temp_history_path)
-    return temp_history_path
+    expanded_paths = []
+    for path in paths:
+        # 環境変数を展開
+        path = os.path.expandvars(path)
+        # ユーザーディレクトリを展開
+        path = os.path.expanduser(path)
+        expanded_paths.append(path)
+    return expanded_paths
+
+def copy_history_files(history_paths):
+    """
+    指定された履歴ファイルを一時的な場所にコピーする。
+    """
+    temp_history_paths = []
+    for idx, history_path in enumerate(history_paths):
+        if not os.path.exists(history_path):
+            print(f"履歴ファイルが見つかりません: {history_path}")
+            continue
+        temp_history_path = f'History_copy_{idx}'
+        try:
+            shutil.copy2(history_path, temp_history_path)
+            temp_history_paths.append(temp_history_path)
+        except Exception as e:
+            print(f"履歴ファイルのコピー中にエラーが発生しました ({history_path}): {e}")
+    return temp_history_paths
 
 def get_target_date(date_str='today', timezone_info=None):
     """
@@ -100,38 +120,43 @@ def calculate_time_stamps(target_date, config):
     
     return micros, micros_next, date_str
 
-def fetch_history_data(temp_history_path, micros_start, micros_end):
+def fetch_history_data(temp_history_paths, micros_start, micros_end):
     """
-    履歴データベースから指定の期間のデータを取得する。
+    履歴データベースから指定の期間のデータを取得し、結合する。
     """
-    try:
-        conn = sqlite3.connect(temp_history_path)
-    except sqlite3.Error as e:
-        print(f"データベースに接続できませんでした: {e}")
-        sys.exit(1)
-    try:
-        query = f'''
-        SELECT
-            urls.url,
-            urls.title,
-            visits.visit_time,
-            visits.from_visit
-        FROM
-            urls, visits
-        WHERE
-            urls.id = visits.url
-            AND visits.visit_time >= {micros_start}
-            AND visits.visit_time < {micros_end}
-        ORDER BY
-            visits.visit_time ASC
-        '''
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
-    except Exception as e:
-        print(f"データの取得中にエラーが発生しました: {e}")
-        conn.close()
-        sys.exit(1)
+    dfs = []
+    for temp_history_path in temp_history_paths:
+        try:
+            conn = sqlite3.connect(temp_history_path)
+            query = f'''
+            SELECT
+                urls.url,
+                urls.title,
+                visits.visit_time,
+                visits.from_visit
+            FROM
+                urls, visits
+            WHERE
+                urls.id = visits.url
+                AND visits.visit_time >= {micros_start}
+                AND visits.visit_time < {micros_end}
+            ORDER BY
+                visits.visit_time ASC
+            '''
+            df = pd.read_sql_query(query, conn)
+            dfs.append(df)
+            conn.close()
+        except Exception as e:
+            print(f"データの取得中にエラーが発生しました ({temp_history_path}): {e}")
+            conn.close()
+    if dfs:
+        # 複数のデータフレームを結合
+        combined_df = pd.concat(dfs, ignore_index=True)
+        return combined_df
+    else:
+        print("データが取得できませんでした。")
+        return pd.DataFrame()
+
 
 def process_history_data(df, target_date, config):
     """
@@ -459,9 +484,6 @@ def main():
     # 設定ファイルを読み込む
     config = load_config()
 
-    # 一時的な履歴ファイルをコピー
-    temp_history_path = copy_history_file()
-
     # タイムゾーンの取得
     local_timezone = datetime.now().astimezone().tzinfo
 
@@ -478,18 +500,31 @@ def main():
     micros_start = int((target_day_start.astimezone(timezone.utc) - epoch_start).total_seconds() * 1e6)
     micros_end = int((target_day_end.astimezone(timezone.utc) - epoch_start).total_seconds() * 1e6)
 
+    # 履歴ファイルのパスを取得
+    history_paths = config.get('history_paths', [])
+    if not history_paths:
+        print("履歴ファイルのパスが設定されていません。config.yaml に 'history_paths' を指定してください。")
+        sys.exit(1)
+
+    # パスを展開
+    expanded_history_paths = expand_paths(history_paths)
+
+    # 一時的な履歴ファイルをコピー
+    temp_history_paths = copy_history_files(expanded_history_paths)
+
     # 履歴データを取得
-    df = fetch_history_data(temp_history_path, micros_start, micros_end)
+    df = fetch_history_data(temp_history_paths, micros_start, micros_end)
 
     # 一時ファイルの削除
-    os.remove(temp_history_path)
+    for temp_history_path in temp_history_paths:
+        os.remove(temp_history_path)
 
     # データを加工・分析
     total_visits, top_domains, top_domains_visits, top_pages_info, hourly_visits, keyword_counts = process_history_data(df, target_date, config)
 
     # 現在の.pyファイルのディレクトリを取得
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    
+
     # Markdownファイルのパスを設定
     output_dir = config.get('output_dir', os.path.join(current_dir, 'output'))
     if not os.path.exists(output_dir):
@@ -506,7 +541,6 @@ def main():
 
     # Markdownファイルに書き込む
     write_markdown_file(md_text, md_file_path, file_mode)
-
 
 if __name__ == '__main__':
     main()
