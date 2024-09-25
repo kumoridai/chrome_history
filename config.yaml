@@ -1,5 +1,11 @@
 # config.yaml
 
+# hisoryファイルのパス "~"はユーザーのホームディレクトリ(C:Users/USERNAME等)を表します
+# 複数のパスを設定すれば、複数のブラウザの履歴を統合して集計します
+history_paths:
+  - "~/AppData/Local/Google/Chrome/User Data/Default/History"
+#  - "~/AppData/Local/Sidekick/User Data/Default/History"
+
 # 日時の指定
 # 'today'、'yesterday'、または 'YYYY-MM-DD' の形式で指定します。
 date: 'yesterday'
@@ -8,7 +14,7 @@ date: 'yesterday'
 # 出力ファイル名や Markdown 内で使用される日付の形式を指定します。
 # Python の strftime フォーマットコードを使用します。
 # 例: '%Y_%m_%d' → '2024_09_14'
-date_format: '%Y_%m_%d'
+date_format: '%Y-%m-%d'
 
 # 分析オプション
 # 各分析機能を有効（true）または無効（false）に設定します
@@ -94,5 +100,6 @@ past_days: 7  # デフォルトは7日間
 # Markdown ファイルの出力先ディレクトリ
 # 解析結果の Markdown ファイルを保存するディレクトリを指定します。
 # デフォルトはカレントディレクトリ内の 'output' フォルダ
+
 output_dir: 'output' 
 # 'C:\\Users\\USERNAME\\Google ドライブ\\Obsidian\\journals'のように指定すれば、直接デイリーノートに追記可能
