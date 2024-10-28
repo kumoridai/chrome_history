@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from collections import Counter
+import numpy as np
 
 try:
     import pandas as pd
@@ -85,7 +86,6 @@ def get_target_date(date_str='today', timezone_info=None):
     else:
         return datetime.strptime(date_str, '%Y-%m-%d').replace(tzinfo=timezone_info)
 
-
 def calculate_time_stamps(target_date, config):
     """
     対象の日付に基づいてタイムスタンプを計算する。
@@ -157,8 +157,37 @@ def fetch_history_data(temp_history_paths, micros_start, micros_end):
         print("データが取得できませんでした。")
         return pd.DataFrame()
 
+def fetch_past_history_data(temp_history_paths, micros_past_start, micros_end):
+    """
+    過去の履歴データベースから指定の期間のデータを取得し、結合する。
+    """
+    dfs = []
+    for temp_history_path in temp_history_paths:
+        try:
+            conn = sqlite3.connect(temp_history_path)
+            query = f'''
+            SELECT
+                urls.url
+            FROM
+                urls, visits
+            WHERE
+                urls.id = visits.url
+                AND visits.visit_time >= {micros_past_start}
+                AND visits.visit_time < {micros_end}
+            '''
+            df = pd.read_sql_query(query, conn)
+            dfs.append(df)
+            conn.close()
+        except Exception as e:
+            print(f"過去データの取得中にエラーが発生しました ({temp_history_path}): {e}")
+            conn.close()
+    if dfs:
+        combined_df = pd.concat(dfs, ignore_index=True)
+        return combined_df
+    else:
+        return pd.DataFrame()
 
-def process_history_data(df, target_date, config):
+def process_history_data(df, past_df, target_date, config):
     """
     取得した履歴データを加工・分析する。
     """
@@ -232,110 +261,121 @@ def process_history_data(df, target_date, config):
         # インデックスをリセットして 'url' を列に戻す
         df_page_stats = df_page_stats.reset_index()
 
-        # 過去のデータから 'first_visit' を取得
-        # ターゲット日以前のデータのみを使用
-        df_before_target = df[df['visit_datetime'] < target_day_end]
+        # === ここから "注目したページ" の計算 ===
+        # 過去に訪問したページのURLを取得
+        past_urls = set(past_df['url'].unique()) if not past_df.empty else set()
 
-        first_visits = df_before_target.groupby('url')['visit_datetime'].min().reset_index()
-        first_visits = first_visits.rename(columns={'visit_datetime': 'first_visit'})
+        # 当日初めて訪問したページのみを抽出（過去に訪問したページを除外）
+        df_first_visit = df_page_stats[~df_page_stats['url'].isin(past_urls)].copy()
 
-        # 'first_visit' を 'df_page_stats' にマージ
-        df_page_stats = df_page_stats.merge(first_visits, on='url', how='left')
+        # フィルタリング設定の取得
+        exclude_domains = config.get('exclude_domains', [])
+        exclude_urls = config.get('exclude_urls', [])
+        exclude_url_patterns = config.get('exclude_url_patterns', [])
 
-        # 当日初めて訪問したページのみを抽出
-        df_first_visit = df_page_stats[
-            (df_page_stats['first_visit'] >= target_day_start) &
-            (df_page_stats['first_visit'] < target_day_end)
-        ]
+        # 設定ファイルから重みを取得
+        duration_weight = config.get('score_weights', {}).get('duration_weight', 0.7)
+        visit_count_weight = config.get('score_weights', {}).get('visit_count_weight', 0.3)
+        keyword_weight = config.get('score_weights', {}).get('keyword_weight', 1.0)
+        domain_weight = config.get('score_weights', {}).get('domain_weight', 1.0)
 
-        # 当日初めて訪問したページがない場合の処理
-        if df_first_visit.empty:
-            print("当日初めて訪問したページがありません。")
-            top_pages_info = None
-        else:
-            # スコアの計算
-            # 設定ファイルから重みを取得
-            duration_weight = config.get('score_weights', {}).get('duration_weight', 0.7)
-            visit_count_weight = config.get('score_weights', {}).get('visit_count_weight', 0.3)
-            keyword_weight = config.get('score_weights', {}).get('keyword_weight', 1.0)
-            domain_weight = config.get('score_weights', {}).get('domain_weight', 1.0)
+        # キーワードリストを取得
+        priority_keywords = config.get('priority_keywords', [])
+        priority_keywords = [kw.lower() for kw in priority_keywords]  # 小文字に変換
 
-            # キーワードリストを取得
-            priority_keywords = config.get('priority_keywords', [])
-            priority_keywords = [kw.lower() for kw in priority_keywords]  # 小文字に変換
+        # 優先ドメインのリストを取得
+        priority_domains = config.get('priority_domains', [])
+        priority_domains = [domain.lower() for domain in priority_domains]  # 小文字に変換
 
-            # 優先ドメインのリストを取得
-            priority_domains = config.get('priority_domains', [])
-            priority_domains = [domain.lower() for domain in priority_domains]  # 小文字に変換
-
+        # スコアの計算関数を定義
+        def calculate_scores(df_input):
             # タイトルにキーワードが含まれるかを判定
             def keyword_match_score(title):
                 if not title:
-                    return 0
+                    return 1  # キーワードが含まれない場合は1
                 title_lower = title.lower()
-                return any(kw in title_lower for kw in priority_keywords)
+                return 2 if any(kw in title_lower for kw in priority_keywords) else 1  # キーワードが含まれる場合は2
 
-            df_first_visit['keyword_match'] = df_first_visit['title'].apply(keyword_match_score)
+            df_input['keyword_match'] = df_input['title'].apply(keyword_match_score)
 
             # ドメインが優先ドメインかを判定
-            df_first_visit['domain_match'] = df_first_visit['domain'].apply(lambda d: d.lower() in priority_domains)
+            df_input['domain_match'] = df_input['domain'].apply(lambda d: 2 if d.lower() in priority_domains else 1)
 
-            # スコアの計算
-            df_first_visit['score'] = (
-                df_first_visit['total_duration'] * duration_weight +
-                df_first_visit['visit_count'] * visit_count_weight +
-                df_first_visit['keyword_match'] * keyword_weight +
-                df_first_visit['domain_match'] * domain_weight
+            # 訪問回数と訪問時間最大値を取得
+            max_visit_count = df_input['visit_count'].max() or 1
+            max_duration = df_input['total_duration'].max() or 1800
+
+            # パラメータを0から1の範囲に正規化し、1を加算して1から2の範囲に調整
+            df_input['norm_visit_count'] = (df_input['visit_count'] / max_visit_count) + 1
+
+            # 滞在時間を対数関数で変換
+            df_input['log_duration'] = np.log1p(df_input['total_duration'])
+
+            # log1p()で最大値を計算し、それに基づいてスコアを1~2にスケーリング
+            df_input['normalized_log_duration'] = (df_input['log_duration'] / np.log1p(max_duration)) + 1
+
+            # スコアの計算（各パラメータの積）
+            df_input['score'] = (
+                df_input['normalized_log_duration'] ** duration_weight *
+                df_input['norm_visit_count'] ** visit_count_weight *
+                df_input['keyword_match'] ** keyword_weight *
+                df_input['domain_match'] ** domain_weight
             )
+            return df_input
 
-            # フィルタリング
-            exclude_domains = config.get('exclude_domains', [])
-            exclude_urls = config.get('exclude_urls', [])
-            exclude_url_patterns = config.get('exclude_url_patterns', [])
-
+        # フィルタリング関数を定義
+        def apply_filters(df_input):
             # ドメインの除外
-            df_first_visit = df_first_visit[~df_first_visit['domain'].isin(exclude_domains)]
+            df_filtered = df_input[~df_input['domain'].isin(exclude_domains)]
 
             # URLの完全一致による除外
-            df_first_visit = df_first_visit[~df_first_visit['url'].isin(exclude_urls)]
+            df_filtered = df_filtered[~df_filtered['url'].isin(exclude_urls)]
 
             # URLパターンによる除外
             for pattern in exclude_url_patterns:
-                df_first_visit = df_first_visit[~df_first_visit['url'].str.match(pattern)]
+                df_filtered = df_filtered[~df_filtered['url'].str.match(pattern)]
 
-            # スコア順に並べ替え
-            df_first_visit = df_first_visit.sort_values(by='score', ascending=False)
+            return df_filtered
 
-            # === ここで優先ドメインと非優先ドメインに分割 ===
-            priority_df = df_first_visit[df_first_visit['domain'].str.lower().isin(priority_domains)]
-            non_priority_df = df_first_visit[~df_first_visit['domain'].str.lower().isin(priority_domains)]
+        # 当日初めて訪問したページにフィルタを適用
+        df_first_visit = apply_filters(df_first_visit)
+        df_first_visit = calculate_scores(df_first_visit)
 
-            # 非優先ドメインのページで、ドメイン重複を除外
-            non_priority_df = non_priority_df.drop_duplicates(subset='domain', keep='first')
+        # === 優先ドメインと非優先ドメインの処理 ===
+        priority_df = df_first_visit[df_first_visit['domain'].str.lower().isin(priority_domains)]
+        non_priority_df = df_first_visit[~df_first_visit['domain'].str.lower().isin(priority_domains)]
 
-            # 優先ドメインのページと非優先ドメインのページを再結合
-            df_first_visit = pd.concat([priority_df, non_priority_df], ignore_index=True)
+        # 非優先ドメインのページで、ドメイン重複を除外
+        non_priority_df = non_priority_df.drop_duplicates(subset='domain', keep='first')
 
-            # 再度スコア順に並べ替え
-            df_first_visit = df_first_visit.sort_values(by='score', ascending=False)
+        # 優先ドメインのページと非優先ドメインのページを再結合
+        df_first_visit = pd.concat([priority_df, non_priority_df], ignore_index=True)
 
-            # 上位10件を取得
-            top_pages_info = df_first_visit.head(10)[['title', 'url']].reset_index(drop=True)
+        # スコア順に並べ替え
+        df_first_visit = df_first_visit.sort_values(by='score', ascending=False)
 
-        # 最も訪問したドメインの計算（当日のデータのみ）
+        # 上位10件を取得（過去に訪問したページを含めず、最大10件）
+        top_pages_info = df_first_visit.head(10)[['title', 'url', 'score']].reset_index(drop=True)
+
+        if top_pages_info.empty:
+            print("当日初めて訪問したページがありません。")
+            top_pages_info = None
+
+        # === その他の統計情報の計算（過去に訪問したページも含む） ===
+
+        # 最も訪問したドメインの計算
         domain_time = df_target_day.groupby('domain')['duration'].sum()
         domain_visits = df_target_day['domain'].value_counts()
         top_domains = domain_time.sort_values(ascending=False).head(10)
         top_domains_visits = domain_visits.loc[top_domains.index]
 
-        # 時間帯ごとのアクセス数（当日のデータのみ）
+        # 時間帯ごとのアクセス数
         hourly_visits = get_hourly_activity(df_target_day)
 
-        # キーワードの抽出（当日のデータのみ）
+        # キーワードの抽出
         keyword_counts = extract_keywords(df_target_day)
 
         return total_visits, top_domains, top_domains_visits, top_pages_info, hourly_visits, keyword_counts
-
 
 def get_hourly_activity(df):
     """
@@ -413,8 +453,9 @@ def generate_markdown_text(date_str, total_visits, top_domains, top_domains_visi
             for idx, row in top_pages_info.iterrows():
                 title = row['title'] if row['title'] else '（タイトルなし）'
                 url = row['url']
+                score = round(row['score'], 2)
                 md_text += f'- [{title}]({url})\n'
-
+    
         # キーワード上位10
         if analysis_options.get('top_keywords', True) and keyword_counts is not None:
             md_text += '\n## キーワード上位10\n\n'
@@ -423,7 +464,7 @@ def generate_markdown_text(date_str, total_visits, top_domains, top_domains_visi
             md_text += '|---|---|\n'
             for word, count in keyword_counts:
                 md_text += f'| {word} | {count}回 |\n'
-
+    
         # 最も訪問したドメイン
         if analysis_options.get('top_domains', True) and top_domains is not None:
             md_text += '\n## 最も訪問したドメイン（滞在時間順）\n\n'
@@ -436,18 +477,15 @@ def generate_markdown_text(date_str, total_visits, top_domains, top_domains_visi
                 minutes, seconds = divmod(time_spent, 60)
                 time_str = f'{int(minutes)}分{int(seconds)}秒'
                 md_text += f'| {domain} | {visits}回 | {time_str} |\n'
-
+    
         # 時間帯ごとのアクセス数
         if analysis_options.get('hourly_visits', True) and hourly_visits is not None:
             md_text += '\n## 時間帯ごとのアクセス数\n\n'
             md_text += generate_chartsview_data(hourly_visits)
-
+    
     else:
         md_text += '- **データがありません**\n'
     
-    # 必要に応じてメモや感想を追加するためのテンプレート
-    # md_text += '\n## メモと感想\n\n'
-    # md_text += '- '
     return md_text, file_mode
 
 
@@ -500,6 +538,11 @@ def main():
     micros_start = int((target_day_start.astimezone(timezone.utc) - epoch_start).total_seconds() * 1e6)
     micros_end = int((target_day_end.astimezone(timezone.utc) - epoch_start).total_seconds() * 1e6)
 
+    # 過去N日分のデータを取得
+    past_days = config.get('past_days', 7)
+    past_start_date = target_day_start - timedelta(days=past_days)
+    micros_past_start = int((past_start_date.astimezone(timezone.utc) - epoch_start).total_seconds() * 1e6)
+
     # 履歴ファイルのパスを取得
     history_paths = config.get('history_paths', [])
     if not history_paths:
@@ -515,12 +558,15 @@ def main():
     # 履歴データを取得
     df = fetch_history_data(temp_history_paths, micros_start, micros_end)
 
+    # 過去データを取得
+    past_df = fetch_past_history_data(temp_history_paths, micros_past_start, micros_start)
+
     # 一時ファイルの削除
     for temp_history_path in temp_history_paths:
         os.remove(temp_history_path)
 
     # データを加工・分析
-    total_visits, top_domains, top_domains_visits, top_pages_info, hourly_visits, keyword_counts = process_history_data(df, target_date, config)
+    total_visits, top_domains, top_domains_visits, top_pages_info, hourly_visits, keyword_counts = process_history_data(df, past_df, target_date, config)
 
     # 現在の.pyファイルのディレクトリを取得
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -529,7 +575,7 @@ def main():
     output_dir = config.get('output_dir', os.path.join(current_dir, 'output'))
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    date_format = config.get('date_format', '%Y_%m_%d')
+    date_format = config.get('date_format', '%Y-%m-%d')
     date_str = target_date.strftime(date_format)
     md_file_path = os.path.join(output_dir, f'{date_str}.md')
 
