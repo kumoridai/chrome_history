@@ -1,6 +1,6 @@
 # config.yaml
 
-# hisoryファイルのパス "~"はユーザーのホームディレクトリ(C:Users/USERNAME等)を表します
+# historyファイルのパス "~"はユーザーのホームディレクトリ(C:Users/USERNAME等)を表します
 # 複数のパスを設定すれば、複数のブラウザの履歴を統合して集計します
 history_paths:
   - "~/AppData/Local/Google/Chrome/User Data/Default/History"
@@ -72,17 +72,17 @@ max_duration: 1800
 # スコア計算の重み
 # 注目したページを選定する際のスコア計算で使用します。合計値を気にする必要はありません。
 score_weights:
-  duration_weight: 0.7       # 滞在時間の重み
-  visit_count_weight: 0.3    # 訪問回数の重み
-  keyword_weight: 1.0        # キーワードマッチの重み
-  domain_weight: 1.5         # 優先ドメインマッチの重み
+  duration_weight: 1.0       # 滞在時間の重み
+  visit_count_weight: 2.0 #0.3    # 訪問回数の重み
+  keyword_weight: 0.5 #0.2        # キーワードマッチの重み
+  domain_weight: 0.0 #0.2         # 優先ドメインマッチの重み
 
 # 優先キーワードのリスト
 # タイトルに含まれるとスコアが加算されるキーワードを指定します。
 priority_keywords:
   - 'Obsidian'
   - 'python'
-  - 'ポケモン'
+  - '解説'
   # 他に追加したいキーワードをリストに追加してください
 
 # 優先ドメインのリスト
@@ -94,8 +94,8 @@ priority_domains:
   - 'ja.wikipedia.org'
   # 他に追加したい優先ドメインをリストに追加してください
 
-# 過去何日分のデータを取得するか（初訪問判定に使用）
-past_days: 7  # デフォルトは7日間
+# 過去何日分のデータを参照して初訪問を判定するか
+past_days: 7  # デフォルトは7日間　(Chrome履歴の最大保存日数は3か月ほど)
 
 # Markdown ファイルの出力先ディレクトリ
 # 解析結果の Markdown ファイルを保存するディレクトリを指定します。

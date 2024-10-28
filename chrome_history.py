@@ -5,6 +5,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from collections import Counter
+import numpy as np
 
 try:
     import pandas as pd
@@ -291,21 +292,34 @@ def process_history_data(df, past_df, target_date, config):
             # タイトルにキーワードが含まれるかを判定
             def keyword_match_score(title):
                 if not title:
-                    return 0
+                    return 1  # キーワードが含まれない場合は1
                 title_lower = title.lower()
-                return any(kw in title_lower for kw in priority_keywords)
+                return 2 if any(kw in title_lower for kw in priority_keywords) else 1  # キーワードが含まれる場合は2
 
             df_input['keyword_match'] = df_input['title'].apply(keyword_match_score)
 
             # ドメインが優先ドメインかを判定
-            df_input['domain_match'] = df_input['domain'].apply(lambda d: d.lower() in priority_domains)
+            df_input['domain_match'] = df_input['domain'].apply(lambda d: 2 if d.lower() in priority_domains else 1)
 
-            # スコアの計算
+            # 訪問回数と訪問時間最大値を取得
+            max_visit_count = df_input['visit_count'].max() or 1
+            max_duration = df_input['total_duration'].max() or 1800
+
+            # パラメータを0から1の範囲に正規化し、1を加算して1から2の範囲に調整
+            df_input['norm_visit_count'] = (df_input['visit_count'] / max_visit_count) + 1
+
+            # 滞在時間を対数関数で変換
+            df_input['log_duration'] = np.log1p(df_input['total_duration'])
+
+            # log1p()で最大値を計算し、それに基づいてスコアを1~2にスケーリング
+            df_input['normalized_log_duration'] = (df_input['log_duration'] / np.log1p(max_duration)) + 1
+
+            # スコアの計算（各パラメータの積）
             df_input['score'] = (
-                df_input['total_duration'] * duration_weight +
-                df_input['visit_count'] * visit_count_weight +
-                df_input['keyword_match'] * keyword_weight +
-                df_input['domain_match'] * domain_weight
+                df_input['normalized_log_duration'] ** duration_weight *
+                df_input['norm_visit_count'] ** visit_count_weight *
+                df_input['keyword_match'] ** keyword_weight *
+                df_input['domain_match'] ** domain_weight
             )
             return df_input
 
@@ -341,7 +355,7 @@ def process_history_data(df, past_df, target_date, config):
         df_first_visit = df_first_visit.sort_values(by='score', ascending=False)
 
         # 上位10件を取得（過去に訪問したページを含めず、最大10件）
-        top_pages_info = df_first_visit.head(10)[['title', 'url']].reset_index(drop=True)
+        top_pages_info = df_first_visit.head(10)[['title', 'url', 'score']].reset_index(drop=True)
 
         if top_pages_info.empty:
             print("当日初めて訪問したページがありません。")
@@ -362,7 +376,6 @@ def process_history_data(df, past_df, target_date, config):
         keyword_counts = extract_keywords(df_target_day)
 
         return total_visits, top_domains, top_domains_visits, top_pages_info, hourly_visits, keyword_counts
-
 
 def get_hourly_activity(df):
     """
@@ -440,8 +453,9 @@ def generate_markdown_text(date_str, total_visits, top_domains, top_domains_visi
             for idx, row in top_pages_info.iterrows():
                 title = row['title'] if row['title'] else '（タイトルなし）'
                 url = row['url']
+                score = round(row['score'], 2)
                 md_text += f'- [{title}]({url})\n'
-
+    
         # キーワード上位10
         if analysis_options.get('top_keywords', True) and keyword_counts is not None:
             md_text += '\n## キーワード上位10\n\n'
@@ -450,7 +464,7 @@ def generate_markdown_text(date_str, total_visits, top_domains, top_domains_visi
             md_text += '|---|---|\n'
             for word, count in keyword_counts:
                 md_text += f'| {word} | {count}回 |\n'
-
+    
         # 最も訪問したドメイン
         if analysis_options.get('top_domains', True) and top_domains is not None:
             md_text += '\n## 最も訪問したドメイン（滞在時間順）\n\n'
@@ -463,18 +477,15 @@ def generate_markdown_text(date_str, total_visits, top_domains, top_domains_visi
                 minutes, seconds = divmod(time_spent, 60)
                 time_str = f'{int(minutes)}分{int(seconds)}秒'
                 md_text += f'| {domain} | {visits}回 | {time_str} |\n'
-
+    
         # 時間帯ごとのアクセス数
         if analysis_options.get('hourly_visits', True) and hourly_visits is not None:
             md_text += '\n## 時間帯ごとのアクセス数\n\n'
             md_text += generate_chartsview_data(hourly_visits)
-
+    
     else:
         md_text += '- **データがありません**\n'
     
-    # 必要に応じてメモや感想を追加するためのテンプレート
-    # md_text += '\n## メモと感想\n\n'
-    # md_text += '- '
     return md_text, file_mode
 
 
@@ -564,7 +575,7 @@ def main():
     output_dir = config.get('output_dir', os.path.join(current_dir, 'output'))
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    date_format = config.get('date_format', '%Y_%m_%d')
+    date_format = config.get('date_format', '%Y-%m-%d')
     date_str = target_date.strftime(date_format)
     md_file_path = os.path.join(output_dir, f'{date_str}.md')
 
